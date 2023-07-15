@@ -4,6 +4,13 @@ from __future__ import annotations
 from datetime import timedelta
 import logging
 from typing import Any
+from enum import Enum
+
+class EPHDeviceType(Enum):
+    """
+    DeviceType numbers returned by API
+    """
+    IMMERSION = 4     # device type for immersions returned by EPH
 
 from pyephember.pyephember import (
     EphEmber,
@@ -89,8 +96,7 @@ class EphEmberThermostat(ClimateEntity):
         self._ember = ember
         self._zone_name = zone_name(zone)
         self._zone = zone
-        self._hot_water = zone['deviceType'] == 4
-        """4 is a specific device type for immersions returned by EPH. Hot Water temp cannot be changed"""
+        self._hot_water = zone['deviceType'] == EPHDeviceType.IMMERSION # Hot Water temp cannot be changed
         
         self._attr_name = self._zone_name
 
