@@ -22,9 +22,9 @@ class EPHDeviceType(IntEnum):
 
 from pyephember.pyephember import (
     EphEmber,
+    boiler_state,
     ZoneMode,
     zone_current_temperature,
-    zone_is_active,
     zone_is_boost_active,
     zone_mode,
     zone_name,
