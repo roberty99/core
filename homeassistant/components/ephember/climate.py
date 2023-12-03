@@ -30,6 +30,7 @@ from homeassistant.const import (
     CONF_USERNAME,
     UnitOfTemperature,
 )
+from . import const
 from homeassistant.core import HomeAssistant
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -89,8 +90,7 @@ class EphEmberThermostat(ClimateEntity):
         self._ember = ember
         self._zone_name = zone_name(zone)
         self._zone = zone
-        self._hot_water = zone['deviceType'] == 4
-        """4 is a specific device type for immersions returned by EPH. Hot Water temp cannot be changed"""
+        self._hot_water = zone['deviceType'] == DEVICE_TYPE['immersion']
         
         self._attr_name = self._zone_name
 
