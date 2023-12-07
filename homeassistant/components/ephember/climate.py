@@ -4,12 +4,27 @@ from __future__ import annotations
 from datetime import timedelta
 import logging
 from typing import Any
+from enum import IntEnum
+
+class EPHBoilerStates(IntEnum):
+    """
+    Boiler states for a zone given by the api
+    """
+    FIXME = 0
+    OFF = 1
+    ON = 2
+
+class EPHDeviceType(IntEnum):
+    """
+    DeviceType numbers returned by API
+    """
+    IMMERSION = 4     # device type for immersions returned by EPH
 
 from pyephember.pyephember import (
     EphEmber,
+    boiler_state,
     ZoneMode,
     zone_current_temperature,
-    zone_is_active,
     zone_is_boost_active,
     zone_mode,
     zone_name,
@@ -89,8 +104,7 @@ class EphEmberThermostat(ClimateEntity):
         self._ember = ember
         self._zone_name = zone_name(zone)
         self._zone = zone
-        self._hot_water = zone['deviceType'] == 4
-        """4 is a specific device type for immersions returned by EPH. Hot Water temp cannot be changed"""
+        self._hot_water = zone['deviceType'] == EPHDeviceType.IMMERSION # Hot Water temp cannot be changed
         
         self._attr_name = self._zone_name
 
@@ -115,7 +129,7 @@ class EphEmberThermostat(ClimateEntity):
     @property
     def hvac_action(self) -> HVACAction:
         """Return current HVAC action."""
-        if zone_is_active(self._zone):
+        if boiler_state(self._zone) == EPHBoilerStates.ON:
             return HVACAction.HEATING
 
         return HVACAction.IDLE
