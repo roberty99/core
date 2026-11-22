@@ -7,11 +7,22 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pytest_homeassistant.common import MockConfigEntry
 
-from homeassistant.components.ephember.const import DOMAIN
+from homeassistant.components.ephember.const import (
+    CONF_LOCAL_HOST,
+    CONF_LOCAL_PORT,
+    DEFAULT_LOCAL_PORT,
+    DOMAIN,
+)
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 
-from . import MOCK_PASSWORD, MOCK_USER_ID, MOCK_USERNAME
+from . import (
+    MOCK_GATEWAY_ID,
+    MOCK_LOCAL_HOST,
+    MOCK_PASSWORD,
+    MOCK_USER_ID,
+    MOCK_USERNAME,
+)
 
 
 def _zone(
@@ -87,3 +98,56 @@ async def init_integration(
     await hass.config_entries.async_setup(mock_config_entry.entry_id)
     await hass.async_block_till_done()
     return mock_config_entry
+
+
+@pytest.fixture
+def mock_local_config_entry() -> MockConfigEntry:
+    """Return a config entry for a gateway on a local broker."""
+    return MockConfigEntry(
+        domain=DOMAIN,
+        title="EPH Ember (local)",
+        data={CONF_LOCAL_HOST: MOCK_LOCAL_HOST, CONF_LOCAL_PORT: DEFAULT_LOCAL_PORT},
+        unique_id=MOCK_GATEWAY_ID,
+    )
+
+
+@pytest.fixture
+def mock_ember_local() -> Generator[MagicMock]:
+    """Mock the EphEmberLocal client used in local mode and the config flow."""
+    with (
+        patch(
+            "homeassistant.components.ephember.EphEmberLocal", autospec=True
+        ) as mock_class,
+        patch(
+            "homeassistant.components.ephember.config_flow.EphEmberLocal",
+            new=mock_class,
+        ),
+    ):
+        ember = mock_class.return_value
+        homes = [
+            {
+                "gatewayid": MOCK_GATEWAY_ID,
+                "zones": [
+                    _zone("rad", "Radiators", 2, {5: 200, 6: 205, 7: 2, 10: 2}),
+                    _zone("hw", "Hot Water", 4, {5: 250, 6: 600, 7: 3, 10: 1}),
+                ],
+            }
+        ]
+        ember.get_zones.return_value = homes
+        ember.get_zone.side_effect = lambda zoneid: next(
+            zone for zone in homes[0]["zones"] if zone["zoneid"] == zoneid
+        )
+        yield ember
+
+
+@pytest.fixture
+async def init_local_integration(
+    hass: HomeAssistant,
+    mock_local_config_entry: MockConfigEntry,
+    mock_ember_local: MagicMock,
+) -> MockConfigEntry:
+    """Set up the integration from a local config entry."""
+    mock_local_config_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_local_config_entry.entry_id)
+    await hass.async_block_till_done()
+    return mock_local_config_entry

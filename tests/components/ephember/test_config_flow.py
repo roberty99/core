@@ -1,6 +1,6 @@
 """Tests for the EPH Controls Ember config flow."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from pyephember2.pyephember2 import EphEmberError
 import pytest
@@ -12,7 +12,13 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
-from . import MOCK_PASSWORD, MOCK_USER_ID, MOCK_USERNAME
+from . import (
+    MOCK_GATEWAY_ID,
+    MOCK_LOCAL_HOST,
+    MOCK_PASSWORD,
+    MOCK_USER_ID,
+    MOCK_USERNAME,
+)
 
 USER_INPUT = {CONF_USERNAME: MOCK_USERNAME, CONF_PASSWORD: MOCK_PASSWORD}
 
@@ -23,8 +29,14 @@ async def test_user_flow(hass: HomeAssistant, mock_ember: MagicMock) -> None:
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": SOURCE_USER}
     )
-    assert result["type"] is FlowResultType.FORM
+    assert result["type"] is FlowResultType.MENU
     assert result["step_id"] == "user"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "cloud"}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "cloud"
     assert result["errors"] == {}
 
     result = await hass.config_entries.flow.async_configure(
@@ -58,6 +70,9 @@ async def test_user_flow_errors(
         DOMAIN, context={"source": SOURCE_USER}
     )
     result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "cloud"}
+    )
+    result = await hass.config_entries.flow.async_configure(
         result["flow_id"], USER_INPUT
     )
     assert result["type"] is FlowResultType.FORM
@@ -79,6 +94,9 @@ async def test_user_flow_already_configured(
 
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "cloud"}
     )
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], USER_INPUT
@@ -195,3 +213,110 @@ async def test_reauth_flow_other_account(
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "unique_id_mismatch"
     assert mock_config_entry.data[CONF_PASSWORD] == MOCK_PASSWORD
+
+
+_FOUND_ZONE = {"zoneid": "rad", "name": "Radiators", "deviceType": 2}
+
+LOCAL_INPUT = {
+    "local_host": MOCK_LOCAL_HOST,
+    "local_port": 11883,
+    "local_username": "homeassistant",
+    "local_password": "secret",
+}
+
+
+@pytest.mark.usefixtures("mock_setup_entry")
+async def test_local_flow(hass: HomeAssistant, mock_ember_local: MagicMock) -> None:
+    """Test setting up a gateway through a local broker, without the cloud."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "local"}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "local"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], LOCAL_INPUT
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "EPH Ember (local)"
+    assert result["data"] == LOCAL_INPUT
+    assert result["result"].unique_id == MOCK_GATEWAY_ID
+    mock_ember_local.close.assert_called_once()
+
+
+@pytest.mark.usefixtures("mock_setup_entry")
+async def test_local_flow_cannot_connect(
+    hass: HomeAssistant, mock_ember_local: MagicMock
+) -> None:
+    """Test an error is shown when the broker cannot be reached."""
+    with patch(
+        "homeassistant.components.ephember.config_flow.EphEmberLocal",
+        side_effect=OSError("refused"),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"next_step_id": "local"}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], LOCAL_INPUT
+        )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "cannot_connect"}
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], LOCAL_INPUT
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+
+
+@pytest.mark.usefixtures("mock_setup_entry")
+async def test_local_flow_no_zones(
+    hass: HomeAssistant, mock_ember_local: MagicMock
+) -> None:
+    """Test an error is shown when the broker has no gateway zones."""
+    mock_ember_local.get_zones.return_value = []
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "local"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], LOCAL_INPUT
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "no_zones"}
+
+    mock_ember_local.get_zones.return_value = [
+        {"gatewayid": MOCK_GATEWAY_ID, "zones": [_FOUND_ZONE]}
+    ]
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], LOCAL_INPUT
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+
+
+@pytest.mark.usefixtures("mock_ember_local")
+async def test_local_flow_already_configured(
+    hass: HomeAssistant, mock_local_config_entry: MockConfigEntry
+) -> None:
+    """Test the same gateway cannot be added twice."""
+    mock_local_config_entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "local"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], LOCAL_INPUT
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"

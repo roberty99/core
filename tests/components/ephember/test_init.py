@@ -108,3 +108,59 @@ async def test_rejected_password_starts_reauth(
     assert len(flows) == 1
     assert flows[0]["context"]["source"] == SOURCE_REAUTH
     assert flows[0]["context"]["entry_id"] == mock_config_entry.entry_id
+
+
+async def test_local_setup_and_unload(
+    hass: HomeAssistant, init_local_integration: MockConfigEntry
+) -> None:
+    """Test a local config entry loads and closes the broker on unload."""
+    assert init_local_integration.state is ConfigEntryState.LOADED
+
+    await hass.config_entries.async_unload(init_local_integration.entry_id)
+    await hass.async_block_till_done()
+    assert init_local_integration.state is ConfigEntryState.NOT_LOADED
+
+
+async def test_local_setup_no_zones_yet(
+    hass: HomeAssistant,
+    mock_local_config_entry: MockConfigEntry,
+    mock_ember_local: MagicMock,
+) -> None:
+    """Test local setup retries until the gateway's zones arrive."""
+    mock_ember_local.get_zones.return_value = [{"gatewayid": "gw", "zones": []}]
+    mock_local_config_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_local_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert mock_local_config_entry.state is ConfigEntryState.SETUP_RETRY
+    mock_ember_local.close.assert_called_once()
+
+
+async def test_local_cannot_connect(
+    hass: HomeAssistant, mock_local_config_entry: MockConfigEntry
+) -> None:
+    """Test local setup retries when the broker is unreachable."""
+    mock_local_config_entry.add_to_hass(hass)
+    with patch(
+        "homeassistant.components.ephember.EphEmberLocal",
+        side_effect=OSError("refused"),
+    ):
+        await hass.config_entries.async_setup(mock_local_config_entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert mock_local_config_entry.state is ConfigEntryState.SETUP_RETRY
+
+
+async def test_local_get_zones_error(
+    hass: HomeAssistant,
+    mock_local_config_entry: MockConfigEntry,
+    mock_ember_local: MagicMock,
+) -> None:
+    """Test local setup retries and closes the broker if zones can't be read."""
+    mock_ember_local.get_zones.side_effect = EphEmberError("500 response code")
+    mock_local_config_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_local_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert mock_local_config_entry.state is ConfigEntryState.SETUP_RETRY
+    mock_ember_local.close.assert_called_once()
